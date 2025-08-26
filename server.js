@@ -75,14 +75,19 @@ app.post('/analyze-seo', async (req, res) => {
         };
 
         const prompt = `
-            Act as an expert SEO analyst. Analyze the following SEO data for the URL "${url}" and provide a human-readable SEO report in Markdown format.
-            The data is: ${JSON.stringify(combinedData, null, 2)}.
+            Act as an expert SEO analyst. Analyze the following SEO data for the URL "${url}": ${JSON.stringify(combinedData, null, 2)}.
+            
+            Based on the data, respond with ONLY a valid JSON object. Do not include any text, markdown formatting, or code fences before or after the JSON object.
+            
+            IMPORTANT: For the 'strengths', 'weaknesses', and 'suggestions' arrays, each string in the array must be a clean, complete sentence. **Do not include any numbering (like "1.", "2."), bullet points, asterisks (*), or any other markdown formatting.**
 
-            The report must include these exact sections, each with bullet points:
-            - **SEO Health:** An overall score out of 100 based on the provided data.
-            - **Strengths:** 2-3 key strengths based on the data.
-            - **Weaknesses:** 2-3 key weaknesses based on the data.
-            - **Actionable Suggestions:** 3-4 specific, actionable suggestions for improvement based on the weaknesses.
+            The JSON object must follow this exact structure. If you cannot find 2 relevant points for any array, you MUST return an empty array [] for that key.
+            {
+              "seoHealth": <An overall score out of 100 based on the data (number)>,
+              "strengths": ["A clean sentence for the first strength.", "A clean sentence for the second strength."],
+              "weaknesses": ["A clean sentence for the first weakness.", "A clean sentence for the second weakness."],
+              "suggestions": ["A clean sentence for the first suggestion.", "A clean sentence for the second suggestion."]
+            }
         `;
 
         const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
