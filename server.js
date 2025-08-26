@@ -115,6 +115,10 @@ app.post('/analyze-seo', async (req, res) => {
     }
 });
 
+// Root route to check if the server is running
+app.get('/', (req, res) => {
+  res.json({ message: 'Success! Your AI Analyzer server is running.' });
+});
 // সার্ভার চালু করা হচ্ছে
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
