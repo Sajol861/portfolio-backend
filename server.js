@@ -31,57 +31,55 @@ app.post('/analyze-seo', async (req, res) => {
         if (!url) {
             return res.status(400).json({ error: 'URL is required' });
         }
+        console.log(`Analyzing URL: ${url}`);
 
-        // --- ধাপ ১: SerpApi থেকে SERP ডেটা সংগ্রহ ---
-        console.log('Fetching SerpApi data...');
-        const serpApiUrl = `https://serpapi.com/search.json?q=${encodeURIComponent(`site:${url}`)}&api_key=${SERPAPI_KEY}`;
-        const serpResponse = await fetch(serpApiUrl);
-        if (!serpResponse.ok) {
-            const errorBody = await serpResponse.text();
-            throw new Error(`SerpApi Error: ${serpResponse.status} - ${errorBody}`);
+        // --- API কলগুলো শুরু হচ্ছে ---
+        let serpData, mozMetrics;
+
+        try {
+            console.log('Fetching SerpApi data...');
+            const serpApiUrl = `https://serpapi.com/search.json?q=${encodeURIComponent(`site:${url}`)}&api_key=${SERPAPI_KEY}`;
+            const serpResponse = await fetch(serpApiUrl);
+            if (!serpResponse.ok) throw new Error('Could not fetch data from SerpApi.');
+            serpData = await serpResponse.json();
+        } catch (e) {
+            console.error("SerpApi failed, using fallback data:", e.message);
+            serpData = { search_information: {}, organic_results: [] }; // Fallback
         }
-        const serpData = await serpResponse.json();
 
-        // --- ধাপ ২: Moz API থেকে SEO মেট্রিক্স সংগ্রহ ---
-        console.log('Fetching Moz data...');
-        const mozApiUrl = 'https://lsapi.seomoz.com/v2/url_metrics';
-        const mozResponse = await fetch(mozApiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Basic ${MOZ_API_BASE64}`
-            },
-            body: JSON.stringify({ "targets": [url] })
-        });
-        if (!mozResponse.ok) {
-            const errorBody = await mozResponse.text();
-            throw new Error(`Moz API Error: ${mozResponse.status} - ${errorBody}`);
+        try {
+            console.log('Fetching Moz data...');
+            const mozApiUrl = 'https://lsapi.seomoz.com/v2/url_metrics';
+            const mozResponse = await fetch(mozApiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${MOZ_API_BASE64}` },
+                body: JSON.stringify({ "targets": [url] })
+            });
+            if (!mozResponse.ok) throw new Error('Could not fetch data from Moz API.');
+            const mozDataResponse = await mozResponse.json();
+            mozMetrics = mozDataResponse.results[0];
+        } catch (e) {
+            console.error("Moz API failed, using fallback data:", e.message);
+            mozMetrics = { domain_authority: 0, linking_root_domains: 0, spam_score: 0 }; // Fallback
         }
-        const mozDataResponse = await mozResponse.json();
-        const mozMetrics = mozDataResponse.results[0];
 
-        // --- ধাপ ৩: Gemini AI দ্বারা ডেটা বিশ্লেষণ ---
-        console.log('Analyzing data with Gemini...');
         const combinedData = {
             serpData: {
                 organic_results_count: serpData.search_information?.total_results || 0,
-                top_results: serpData.organic_results ? serpData.organic_results.slice(0, 3).map(r => ({ title: r.title, snippet: r.snippet })) : "No organic results found."
+                top_results: (serpData.organic_results || []).slice(0, 3).map(r => ({ title: r.title, snippet: r.snippet }))
             },
             mozData: {
-                domainAuthority: mozMetrics.domain_authority,
-                linkingRootDomains: mozMetrics.linking_root_domains,
-                spamScore: mozMetrics.spam_score
+                domainAuthority: mozMetrics.domain_authority || 0,
+                linkingRootDomains: mozMetrics.linking_root_domains || 0,
+                spamScore: mozMetrics.spam_score || 0
             }
         };
-
+        
         const prompt = `
             Act as an expert SEO analyst. Analyze the following SEO data for the URL "${url}": ${JSON.stringify(combinedData, null, 2)}.
-            
             Based on the data, respond with ONLY a valid JSON object. Do not include any text, markdown formatting, or code fences before or after the JSON object.
-            
             IMPORTANT: For the 'strengths', 'weaknesses', and 'suggestions' arrays, each string in the array must be a clean, complete sentence. **Do not include any numbering (like "1.", "2."), bullet points, asterisks (*), or any other markdown formatting.**
-
-            The JSON object must follow this exact structure. If you cannot find 2 relevant points for any array, you MUST return an empty array [] for that key.
+            The JSON object must follow this exact structure. If you cannot find relevant points for any array, you MUST return an empty array [] for that key.
             {
               "seoHealth": <An overall score out of 100 based on the data (number)>,
               "strengths": ["A clean sentence for the first strength.", "A clean sentence for the second strength."],
@@ -90,6 +88,7 @@ app.post('/analyze-seo', async (req, res) => {
             }
         `;
 
+        console.log('Analyzing data with Gemini...');
         const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
         const geminiResponse = await fetch(geminiApiUrl, {
             method: 'POST',
@@ -97,26 +96,29 @@ app.post('/analyze-seo', async (req, res) => {
             body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
         });
         if (!geminiResponse.ok) {
-             const errorBody = await geminiResponse.text();
-            throw new Error(`Gemini API Error: ${geminiResponse.status} - ${errorBody}`);
+            const errorText = await geminiResponse.text();
+            console.error(`Gemini API Error: ${errorText}`);
+            throw new Error('Failed to get analysis from Gemini AI.');
         }
+        
         const geminiResult = await geminiResponse.json();
         const reportText = geminiResult.candidates[0].content.parts[0].text;
+        
+        const reportObject = JSON.parse(reportText);
 
-        // --- ধাপ ৪: চূড়ান্ত রিপোর্ট পাঠানো ---
         console.log('Report generated successfully!');
         res.status(200).json({
-            report: reportText,
+            analysis: reportObject,
             mozData: {
-                domainAuthority: mozMetrics.domain_authority,
-                backlinks: mozMetrics.linking_root_domains,
-                spamScore: mozMetrics.spam_score
+                domainAuthority: mozMetrics.domain_authority || 0,
+                backlinks: mozMetrics.linking_root_domains || 0,
+                spamScore: mozMetrics.spam_score || 0
             }
         });
 
     } catch (error) {
-        console.error("Error in server function:", error);
-        res.status(500).json({ error: error.message });
+        console.error("CRITICAL ERROR in /analyze-seo:", error.message);
+        res.status(500).json({ error: "An internal server error occurred. Please check the backend logs." });
     }
 });
 
